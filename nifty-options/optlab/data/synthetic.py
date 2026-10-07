@@ -161,7 +161,7 @@ class SyntheticMarketData(MarketData):
         listed = set(self.calendar.expiries_listed_on(d))
         return [e for e in self._all_expiries if e in listed]
 
-    def lot_size(self, d: date) -> int:
+    def lot_size(self, d: date, expiry: date | None = None) -> int:
         return self.cfg.lot_size or lot_size_on(d)
 
     def _strikes(self, d: date) -> np.ndarray:

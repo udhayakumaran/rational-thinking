@@ -37,12 +37,13 @@ class GridResult:
     points: list[tuple]                 # tuples of values in grid-key order
     results: dict[tuple, BacktestResult]
 
-    def table(self, window: Window | None = None, col: str = "r_multiple", min_trades: int = 1) -> pd.DataFrame:
+    def table(self, window: Window | None = None, col: str = "r_multiple", min_trades: int = 1,
+              exit_within: bool = False) -> pd.DataFrame:
         rows = []
         for pt in self.points:
             t = self.results[pt].trades
             if window is not None:
-                t = slice_trades(t, window)
+                t = slice_trades(t, window, exit_within=exit_within)
             n = len(t)
             r = t[col].astype(float) if n else pd.Series(dtype=float)
             pos, neg = (t["net_pnl"][t["net_pnl"] > 0].sum(), -t["net_pnl"][t["net_pnl"] <= 0].sum()) if n else (0, 0)
@@ -81,11 +82,12 @@ def neighbours(point: tuple, grid: dict[str, list]) -> list[tuple]:
     return out
 
 
-def plateau_scores(gr: GridResult, window: Window | None = None, metric: str = "exp_r") -> pd.DataFrame:
+def plateau_scores(gr: GridResult, window: Window | None = None, metric: str = "exp_r", min_trades: int = 1,
+                   exit_within: bool = False) -> pd.DataFrame:
     """For each point: neighbourhood mean, share of neighbours that are also POSITIVE
     (0 when the point itself is not positive - a plateau of losers is not robustness),
     and a 'robust value' = min(point, neighbourhood mean). Isolated peaks score low."""
-    tab = gr.table(window)
+    tab = gr.table(window, min_trades=min_trades, exit_within=exit_within)   # thin points -> NaN
     keys = list(gr.grid)
     val = {tuple(r[k] for k in keys): r[metric] for _, r in tab.iterrows()}
     rows = []
@@ -105,8 +107,8 @@ def plateau_scores(gr: GridResult, window: Window | None = None, metric: str = "
 def select_robust(gr: GridResult, window: Window, min_trades: int = 20) -> tuple:
     """Choose the parameter point with the best *neighbourhood-robust* value
     (not the raw peak) on ``window``."""
-    ps = plateau_scores(gr, window)
-    tab = gr.table(window)
+    ps = plateau_scores(gr, window, min_trades=max(min_trades // 2, 1), exit_within=True)
+    tab = gr.table(window, exit_within=True)
     ps["trades"] = tab["trades"].to_numpy()
     ok = ps[(ps.trades >= min_trades) & ps.robust_value.notna()]
     if ok.empty:

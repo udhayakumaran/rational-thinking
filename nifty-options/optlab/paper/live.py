@@ -86,8 +86,8 @@ class LiveMarketData(MarketData):
     def expiries(self, d: date) -> list[date]:
         return [e for e, _ in self._exp if e >= d]
 
-    def lot_size(self, d: date) -> int:
-        nxt = [l for e, l in self._exp if e >= d]
+    def lot_size(self, d: date, expiry: date | None = None) -> int:
+        nxt = [l for e, l in self._exp if (e == expiry if expiry else e >= d)]
         return nxt[0] if nxt else lot_size_on(d)
 
     def chain(self, ts: datetime, expiry: date) -> pd.DataFrame:

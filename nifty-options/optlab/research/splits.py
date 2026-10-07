@@ -57,7 +57,13 @@ def walk_forward_windows(days: list[date], train_days: int, test_days: int, step
     return out
 
 
-def slice_trades(trades: pd.DataFrame, w: Window, date_col: str = "entry_ts") -> pd.DataFrame:
+def slice_trades(trades: pd.DataFrame, w: Window, date_col: str = "entry_ts",
+                 exit_within: bool = False) -> pd.DataFrame:
+    """Trades entered inside ``w``. With ``exit_within`` also require the exit inside ``w``
+    (used when CHOOSING parameters so no P&L realised after the window leaks in)."""
     if trades.empty:
         return trades
-    return trades[w.mask(trades[date_col])]
+    m = w.mask(trades[date_col])
+    if exit_within and "exit_ts" in trades:
+        m &= pd.to_datetime(trades["exit_ts"]).dt.date <= w.end
+    return trades[m]

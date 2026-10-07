@@ -78,7 +78,9 @@ class StoredMarketData(MarketData):
     def expiries(self, d: date) -> list[date]:
         return [e for e in self._expiries if e >= d][:8]
 
-    def lot_size(self, d: date) -> int:
+    def lot_size(self, d: date, expiry: date | None = None) -> int:
+        if expiry is not None and expiry in self._lot:
+            return self._lot[expiry]
         nxt = [e for e in self._expiries if e >= d]
         return self._lot.get(nxt[0]) if nxt else lot_size_on(d)
 

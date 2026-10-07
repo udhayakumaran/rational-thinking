@@ -1,4 +1,6 @@
-"""End-to-end experiment pipeline:
+"""End-to-end experiment pipeline (the test split is REPORTED for every variant but
+never used to choose parameters; the gate's out-of-sample record is the walk-forward
+OOS trades, and the fill-stress check runs on exactly those trades):
 
   Hypothesis -> grid backtest (realistic fills) -> parameter choice on TRAIN
   (plateau-robust, not peak) -> VALIDATION -> TEST (touched once) ->
@@ -32,7 +34,7 @@ from ..risk.manager import RiskLimits
 from ..strategies.base import Strategy, StrategyConfig
 from ..strategies.regime import build_day_contexts
 from .experiments import Registry, jsonable, write_json
-from .montecarlo import monte_carlo
+from .montecarlo import monte_carlo, monte_carlo_lots
 from .robustness import Thresholds, evaluate
 from .splits import chronological_split, slice_trades, walk_forward_windows
 from .sweep import GridResult, neighbours, plateau_scores, run_grid, select_robust, set_path
@@ -122,6 +124,8 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
     out_dir.mkdir(parents=True, exist_ok=True)
 
     variants_out = {}
+    n_grid = int(np.prod([len(v) for v in grid.values()])) if grid else 1
+    n_tests = n_grid * len(spec["variants"])   # every configuration tried counts toward significance
     for vname, overrides in spec["variants"].items():
         log(f"  variant {vname}")
         overrides = dict(overrides or {})
@@ -148,7 +152,7 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
         if grid and len(gr.points) > 1:
             from .splits import Window
             oos_win = Window("val+test", valid.start, test.end)
-            ps = plateau_scores(gr, oos_win)
+            ps = plateau_scores(gr, oos_win, min_trades=max(th.reject_below_trades // 3, 5))
             row = ps[np.all([ps[k] == v for k, v in zip(gr.grid, chosen_pt)], axis=0)]
             plateau_same = float(row["nb_same_sign"].iloc[0]) if len(row) and np.isfinite(row["nb_same_sign"].iloc[0]) else 0.0
         # fill-model stress on the chosen config
@@ -156,15 +160,40 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
         for fm_name in ("optimistic", "pessimistic"):
             r = bt[fm_name].run(Strategy(chosen_cfg, md))
             stress[fm_name] = r
-        pess_oos = slice_trades(stress["pessimistic"].trades, test)
+        # pessimistic fills on the SAME walk-forward OOS trades the gate evaluates
+        if wf is not None and len(wf.oos_trades):
+            pess_cache, parts = {}, []
+            for w, row in zip(wfw, wf.windows.to_dict("records")):
+                key = tuple(row["params"][k] for k in gr.grid)
+                if key not in pess_cache:
+                    c = vcfg
+                    for k, v in zip(gr.grid, key):
+                        c = set_path(c, k, v)
+                    pess_cache[key] = stress["pessimistic"] if key == chosen_pt else bt["pessimistic"].run(Strategy(c, md))
+                parts.append(slice_trades(pess_cache[key].trades, w.test))
+            pess_oos = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        else:
+            pess_oos = slice_trades(stress["pessimistic"].trades, test)
         # Rs 1L portfolio simulation with full risk limits
         port = v_port.run(Strategy(chosen_cfg, md))
         port_m = full_metrics(port)
-        mc = monte_carlo(oos["r_multiple"], v_limits.initial_capital, v_limits.risk_per_trade_pct,
-                         n_trades=max(len(oos), 100), n_sims=spec.get("monte_carlo", {}).get("n_sims", 5000),
-                         block=spec.get("monte_carlo", {}).get("block", 5)) if len(oos) else None
+        mc_cfg = spec.get("monte_carlo", {})
+        mc = mc_frac = None
+        if len(oos):
+            span_years = max(len(days) / 252.0, 1e-9)
+            per_year = max(int(round(len(res.trades) / span_years)), 20)
+            # discrete lots, each trade's own rupee risk, one-year horizon (the gate uses this one)
+            mc = monte_carlo_lots(oos["r_multiple"], oos["account_risk"] / oos["lots"], v_limits.initial_capital,
+                                  v_limits.risk_per_trade_pct, n_trades=per_year,
+                                  n_sims=mc_cfg.get("n_sims", 5000), block=mc_cfg.get("block", 5))
+            # idealised fractional sizing, for reference only (what the edge would do with divisible lots)
+            mc_frac = monte_carlo(oos["r_multiple"], v_limits.initial_capital, v_limits.risk_per_trade_pct,
+                                  n_trades=per_year, n_sims=mc_cfg.get("n_sims", 5000), block=mc_cfg.get("block", 5))
+        port_share = (port_m.get("trades", 0) / len(res.trades)) if len(res.trades) else 0.0
         verdict = evaluate(res.trades, tr_t, oos, pessimistic_oos_trades=pess_oos, plateau_same_sign=plateau_same,
-                           portfolio_max_dd=port_m.get("max_drawdown_pct") if port_m.get("trades", 0) else None, mc_p_dd20=mc.p_dd_20 if mc else None, th=th)
+                           portfolio_max_dd=port_m.get("max_drawdown_pct") if port_m.get("trades", 0) else None,
+                           mc_p_dd20=mc.p_dd_20 if (mc and getattr(mc, "share_trades_taken", 0) > 0) else None,
+                           portfolio_trade_share=port_share, n_tests=n_tests, th=th)
         # persist chosen-config runs
         run_ids = {}
         for tag, r in (("realistic", res), ("optimistic", stress["optimistic"]),
@@ -183,6 +212,8 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
             "portfolio_rejections": port.rejections["stage"].value_counts().to_dict() if len(port.rejections) else {},
             "portfolio_rejection_reasons": _top_reasons(port.rejections),
             "monte_carlo": mc.to_dict() if mc else None,
+            "monte_carlo_fractional": mc_frac.to_dict() if mc_frac else None,
+            "portfolio_trade_share": port_share,
             "by_regime": by_group(res.trades, "regime").reset_index().to_dict("records"),
             "by_vol_regime": by_group(res.trades, "vol_regime").reset_index().to_dict("records"),
             "by_direction": by_group(res.trades, "direction").reset_index().to_dict("records"),

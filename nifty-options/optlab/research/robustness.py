@@ -34,6 +34,8 @@ class Thresholds:
     min_trades_per_regime: int = 20
     max_spread_estimated_share: float = 0.20
     min_budget_feasible_share: float = 0.80
+    min_portfolio_trade_share: float = 0.50   # Rs 1L simulation must take >= 50% of research trades
+    max_adjusted_p: float = 0.05              # Sidak-corrected one-sided p for OOS E[R] > 0
 
 
 @dataclass
@@ -75,6 +77,7 @@ def _pf(p: pd.Series) -> float:
 def evaluate(all_trades: pd.DataFrame, is_trades: pd.DataFrame, oos_trades: pd.DataFrame, *,
              pessimistic_oos_trades: pd.DataFrame | None = None, plateau_same_sign: float | None = None,
              portfolio_max_dd: float | None = None, mc_p_dd20: float | None = None,
+             portfolio_trade_share: float | None = None, n_tests: int = 1,
              th: Thresholds = Thresholds()) -> Verdict:
     C: list[Check] = []
     n_all, n_oos = len(all_trades), len(oos_trades)
@@ -94,6 +97,13 @@ def evaluate(all_trades: pd.DataFrame, is_trades: pd.DataFrame, oos_trades: pd.D
     t = _tstat(oos_r) if n_oos else math.nan
     add("oos_tstat", np.isfinite(t) and t >= th.min_oos_tstat, round(t, 2) if np.isfinite(t) else None,
         f">= {th.min_oos_tstat}", fail_hard=False)
+    if np.isfinite(t):
+        from scipy.stats import norm
+        p_one = float(norm.sf(t))
+        p_adj = 1 - (1 - p_one) ** max(n_tests, 1)
+        add("oos_significance_multiple_testing", p_adj <= th.max_adjusted_p,
+            {"p": round(p_one, 4), "p_adj": round(p_adj, 4), "n_tests": n_tests},
+            f"Sidak-adjusted p <= {th.max_adjusted_p} over all variants x grid points tried")
     pf = _pf(oos_trades["net_pnl"]) if n_oos else math.nan
     add("oos_profit_factor", n_oos > 0 and pf >= th.min_oos_profit_factor, round(pf, 3) if np.isfinite(pf) else pf,
         f">= {th.min_oos_profit_factor}")
@@ -136,7 +146,8 @@ def evaluate(all_trades: pd.DataFrame, is_trades: pd.DataFrame, oos_trades: pd.D
     # costs / fills
     if pessimistic_oos_trades is not None and len(pessimistic_oos_trades):
         ep = float(pessimistic_oos_trades["r_multiple"].mean())
-        add("pessimistic_fill_expectancy", ep > 0, round(ep, 4), "> 0 under touch fills + slippage")
+        add("pessimistic_fill_expectancy", ep > 0, round(ep, 4),
+            "> 0 under touch fills + slippage, on the same walk-forward OOS trades")
     if n_oos and "theoretical_pnl" in oos_trades:
         theo, net = float(oos_trades["theoretical_pnl"].sum()), float(oos_trades["net_pnl"].sum())
         add("edge_survives_costs", not (theo > 0 and net <= 0), {"theoretical": round(theo), "net": round(net)},
@@ -144,6 +155,10 @@ def evaluate(all_trades: pd.DataFrame, is_trades: pd.DataFrame, oos_trades: pd.D
     if plateau_same_sign is not None:
         add("parameter_plateau", plateau_same_sign >= th.min_plateau_same_sign, round(plateau_same_sign, 3),
             f"share of neighbours with positive val+test expectancy >= {th.min_plateau_same_sign}", fail_hard=False)
+    if portfolio_trade_share is not None:
+        add("portfolio_tradable", portfolio_trade_share >= th.min_portfolio_trade_share,
+            round(portfolio_trade_share, 3),
+            f"Rs 1L simulation with real limits takes >= {th.min_portfolio_trade_share} of research trades")
     if portfolio_max_dd is not None:
         add("portfolio_max_drawdown", portfolio_max_dd <= th.max_portfolio_dd, round(portfolio_max_dd, 4),
             f"<= {th.max_portfolio_dd}")

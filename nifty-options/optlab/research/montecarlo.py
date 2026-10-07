@@ -31,7 +31,7 @@ class MCResult:
     median_final: float
 
     def to_dict(self) -> dict:
-        return self.__dict__.copy()
+        return dict(self.__dict__)
 
 
 def monte_carlo(r_multiples, initial_capital: float = 100_000.0, risk_pct: float = 0.01, n_trades: int | None = None,
@@ -75,3 +75,53 @@ def monte_carlo(r_multiples, initial_capital: float = 100_000.0, risk_pct: float
         expected_max_losing_streak=float(streaks.mean()), p95_max_losing_streak=float(np.percentile(streaks, 95)),
         median_final=float(np.median(final)),
     )
+
+
+def monte_carlo_lots(r_multiples, risk_per_lot, initial_capital: float = 100_000.0, risk_pct: float = 0.01,
+                     n_trades: int = 250, n_sims: int = 5000, block: int = 5, ruin_drawdown: float = 0.5,
+                     seed: int = 0) -> MCResult:
+    """Discrete-lot Monte Carlo: each resampled trade keeps its own rupee risk per lot;
+    lots = floor(equity * risk_pct / risk_per_lot). Trades that do not fit one lot are
+    SKIPPED (exactly what the risk engine does), so an untradable strategy shows
+    near-zero activity instead of an imaginary fractional-sizing equity curve.
+    Adds ``share_trades_taken`` to the result."""
+    r = np.asarray(r_multiples, dtype=float)
+    rl = np.asarray(risk_per_lot, dtype=float)
+    ok = np.isfinite(r) & np.isfinite(rl) & (rl > 0)
+    r, rl = r[ok], rl[ok]
+    if r.size == 0:
+        raise ValueError("no trades")
+    rng = np.random.default_rng(seed)
+    n = n_trades
+    nb = int(np.ceil(n / block))
+    starts = rng.integers(0, max(r.size - block + 1, 1), size=(n_sims, nb))
+    idx = (starts[:, :, None] + np.arange(block)[None, None, :]).reshape(n_sims, -1)[:, :n] % r.size
+    eq = np.full(n_sims, float(initial_capital))
+    peak = eq.copy()
+    max_dd = np.zeros(n_sims)
+    taken = np.zeros(n_sims)
+    streak = np.zeros(n_sims)
+    best_streak = np.zeros(n_sims)
+    for j in range(n):
+        rr, rpl = r[idx[:, j]], rl[idx[:, j]]
+        lots = np.floor(np.maximum(eq, 0) * risk_pct / rpl)
+        pnl = lots * rpl * rr
+        eq = eq + pnl
+        took = lots > 0
+        taken += took
+        lost = took & (rr <= 0)
+        streak = np.where(lost, streak + 1, np.where(took, 0, streak))
+        best_streak = np.maximum(best_streak, streak)
+        peak = np.maximum(peak, eq)
+        max_dd = np.maximum(max_dd, 1 - eq / peak)
+    q = [5, 25, 50, 75, 95]
+    res = MCResult(
+        n_sims=n_sims, n_trades=n,
+        final_capital_pcts={f"p{p}": float(np.percentile(eq, p)) for p in q},
+        max_dd_pcts={f"p{p}": float(np.percentile(max_dd, p)) for p in q},
+        p_loss_10=float(np.mean(eq <= 0.9 * initial_capital)), p_loss_20=float(np.mean(eq <= 0.8 * initial_capital)),
+        p_dd_20=float(np.mean(max_dd >= 0.2)), p_ruin=float(np.mean(max_dd >= ruin_drawdown)),
+        ruin_level=ruin_drawdown, expected_max_losing_streak=float(best_streak.mean()),
+        p95_max_losing_streak=float(np.percentile(best_streak, 95)), median_final=float(np.median(eq)))
+    res.share_trades_taken = float(taken.mean() / n)
+    return res

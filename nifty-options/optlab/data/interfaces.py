@@ -53,7 +53,8 @@ class MarketData(ABC):
     def quote(self, ts: datetime, contract: OptionContract) -> Quote | None: ...
 
     @abstractmethod
-    def lot_size(self, d: date) -> int: ...
+    def lot_size(self, d: date, expiry: date | None = None) -> int:
+        """Lot size of the contract series expiring on ``expiry`` (nearest series if None)."""
 
     def daily_bars(self) -> pd.DataFrame:
         """Daily OHLC built from intraday bars (override for speed)."""

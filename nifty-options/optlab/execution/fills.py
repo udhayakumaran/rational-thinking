@@ -57,6 +57,7 @@ class FillModel:
     estimator: SpreadEstimator = field(default_factory=SpreadEstimator)
 
     def _bid_ask(self, q: Quote) -> tuple[float, float, bool]:
+        """Two-sided market, or an LTP-only (EOD/OHLC) quote with an estimated spread."""
         if q.has_two_sided:
             return q.bid, q.ask, q.spread_estimated
         if not (math.isfinite(q.ltp) and q.ltp > 0):
@@ -64,11 +65,31 @@ class FillModel:
         h = self.estimator.half_spread(q.ltp)
         return max(q.ltp - h, self.tick), q.ltp + h, True
 
+    @staticmethod
+    def _side_present(x: float) -> bool:
+        return math.isfinite(x) and x > 0
+
+    def _one_sided(self, q: Quote) -> bool:
+        """Exactly one side of the book observed (the other missing or zero)."""
+        return self._side_present(q.bid) != self._side_present(q.ask)
+
     def fill(self, side: Side, q: Quote) -> Fill:
+        slip = self.slippage_ticks * self.tick
+        if self._one_sided(q):
+            # only the observed touch is executable; never price off a stale LTP
+            if side is Side.BUY and not self._side_present(q.ask):
+                raise ValueError(f"no ask for {q.contract.symbol} at {q.ts}")
+            if side is Side.SELL and not self._side_present(q.bid):
+                raise ValueError(f"no bid for {q.contract.symbol} at {q.ts}")
+            touch = q.ask if side is Side.BUY else q.bid
+            raw = touch + slip if side is Side.BUY else touch - slip
+            price = max(_round_against(raw, side, self.tick), self.tick)
+            mid = self.mid(q)
+            return Fill(price=price, mid=mid, side=side,
+                        slippage_points=(price - mid) if side is Side.BUY else (mid - price), spread_estimated=True)
         bid, ask, est = self._bid_ask(q)
         mid = 0.5 * (bid + ask)
         half = 0.5 * (ask - bid)
-        slip = self.slippage_ticks * self.tick
         if self.name is FillModelName.OPTIMISTIC:
             adverse = 0.0
         elif self.name is FillModelName.REALISTIC:
@@ -82,6 +103,12 @@ class FillModel:
         return Fill(price=price, mid=mid, side=side, slippage_points=slippage, spread_estimated=est)
 
     def mid(self, q: Quote) -> float:
+        """Mark price. One-sided books are marked conservatively inside the observed side."""
+        if self._one_sided(q):
+            if self._side_present(q.ask):
+                ltp_ok = math.isfinite(q.ltp) and q.ltp > 0
+                return min(q.ltp, q.ask) if ltp_ok else 0.5 * q.ask
+            return q.bid
         bid, ask, _ = self._bid_ask(q)
         return 0.5 * (bid + ask)
 

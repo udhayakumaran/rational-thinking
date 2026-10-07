@@ -1,7 +1,9 @@
 """Exit policies, evaluated on mid-marks at each bar.
 
-All thresholds are expressed relative to the structure's entry DEBIT (the
-premium actually paid) and, for capped structures, its maximum profit.
+Thresholds are expressed on P&L (value - entry value) relative to a RISK BASE:
+the entry debit for debit structures (so "stop 50%" = lose half the premium) and
+the maximum theoretical loss for credit structures. Profit targets use the
+structure's maximum profit when it is capped.
 Rules are checked in a fixed priority order; the first that fires wins.
 """
 from __future__ import annotations
@@ -54,23 +56,30 @@ class ExitState:
     bars_held: int = 0
     peak_value: float = -math.inf
     days_held: int = 0
+    max_loss: float = math.nan  # points per unit; risk base for credit structures
+
+    @property
+    def risk_base(self) -> float:
+        return self.entry_debit if self.entry_debit > 0 else self.max_loss
 
 
 def check_exit(cfg: ExitConfig, st: ExitState, ts: datetime, value: float, spot: float,
                vwap: float | None, is_expiry_day: bool, is_last_bar: bool) -> str | None:
     """Return an exit reason or None. ``value`` = current mid value of the structure."""
     st.peak_value = max(st.peak_value, value)
-    debit = st.entry_debit
-    if debit > 0:
-        if cfg.stop_loss_pct is not None and value <= debit * (1 - cfg.stop_loss_pct):
+    base = st.risk_base
+    pnl = value - st.entry_debit
+    peak_pnl = st.peak_value - st.entry_debit
+    if math.isfinite(base) and base > 0:
+        if cfg.stop_loss_pct is not None and pnl <= -cfg.stop_loss_pct * base:
             return "stop_loss"
         if cfg.target_pct_max_profit is not None and math.isfinite(st.max_profit) and \
-                value >= debit + cfg.target_pct_max_profit * st.max_profit:
+                pnl >= cfg.target_pct_max_profit * st.max_profit:
             return "target_pct_max_profit"
-        if cfg.target_r_multiple is not None and value >= debit * (1 + cfg.target_r_multiple):
+        if cfg.target_r_multiple is not None and pnl >= cfg.target_r_multiple * base:
             return "target_r_multiple"
-        if cfg.trailing_stop_pct is not None and st.peak_value > debit and \
-                value <= st.peak_value - cfg.trailing_stop_pct * debit:
+        if cfg.trailing_stop_pct is not None and peak_pnl > 0 and \
+                pnl <= peak_pnl - cfg.trailing_stop_pct * base:
             return "trailing_stop"
     if cfg.underlying_invalidation and st.direction_sign:
         f, s = st.features, st.direction_sign

@@ -112,7 +112,7 @@ class Strategy:
             if q is None:
                 return f"no_quote:{leg.contract.symbol}"
             quotes.append(q)
-        lot = self.md.lot_size(ts.date())
+        lot = self.md.lot_size(ts.date(), built.expiry)
         try:
             fills = [fill_model.fill(Side.BUY if leg.ratio > 0 else Side.SELL, q)
                      for leg, q in zip(built.structure.legs, quotes)]
@@ -169,8 +169,9 @@ class Strategy:
         entry_mid_value = sum(l.ratio * m for l, m in zip(p.built.structure.legs, p.mids))
         max_profit = p.profile.max_gain + p.profile.net_premium - entry_mid_value \
             if math.isfinite(p.profile.max_gain) else math.inf
+        max_loss = p.profile.max_loss - p.profile.net_premium + entry_mid_value   # re-based to mid entry
         return ExitState(entry_debit=entry_mid_value, max_profit=max_profit, direction_sign=sign,
-                         entry_ts=ts, features=dict(p.signal.features))
+                         entry_ts=ts, features=dict(p.signal.features), max_loss=max_loss)
 
     def update(self, st: ExitState, ts: datetime, value: float, spot: float, vwap: float | None,
                is_expiry_day: bool, is_last_bar: bool) -> str | None:

@@ -27,7 +27,7 @@ from ..core.pricing import bs_greeks, implied_vol, year_fraction
 from ..core.calendar import minutes_to_expiry
 from ..data.interfaces import MarketData
 from ..execution.costs import CostBreakdown, CostModel, Side
-from ..execution.fills import FillModel
+from ..execution.fills import FillModel, FillModelName
 from ..risk.manager import RiskLimits, RiskManager
 from ..strategies.base import Proposal, Strategy
 from ..strategies.exits import ExitState
@@ -55,6 +55,9 @@ class OpenPosition:
     last_value: float = math.nan
     mfe_points: float = 0.0
     mae_points: float = 0.0
+    last_quotes: list = field(default_factory=list)   # last observed quote per leg (for forced exits)
+    exit_attempts: int = 0
+    flags: list = field(default_factory=list)
 
     @property
     def units_per_leg(self) -> list[int]:
@@ -84,6 +87,9 @@ class TradingCore:
         self.signals_log: list[dict] = []
         self._ids = itertools.count(1)
         self.run_tag = run_tag
+        # forced exits on stale quotes are filled at the touch with extra slippage
+        self._stale_fm = FillModel(FillModelName.PESSIMISTIC, slippage_ticks=fill_model.slippage_ticks + 2,
+                                   estimator=fill_model.estimator)
 
     # ------------------------------------------------------------------ step
     def step(self, ts: datetime, i: int, spot: float, vw: float, new_signals: list[SignalEvent],
@@ -91,11 +97,15 @@ class TradingCore:
         """Process one snapshot. ``i`` = bar index within the session, ``vw`` = session VWAP so far."""
         is_exp_day = bool(ctx and ctx.is_expiry_day)
 
-        # 1) pending exits due now
+        # 1) pending exits due now. A decided exit stays queued until it fills; it is
+        #    force-filled (stale quote, pessimistic) on the last bar or after 3 failed attempts.
         due = [x for x in self.pending_exits if x[0] <= i or is_last_bar]
         self.pending_exits = [x for x in self.pending_exits if not (x[0] <= i or is_last_bar)]
         for _, pos, reason in due:
-            self._close(pos, ts, reason, spot)
+            force = (is_last_bar and self._intraday(pos)) or pos.exit_attempts >= 3
+            if not self._close(pos, ts, reason, spot, force=force):
+                pos.exit_attempts += 1
+                self.pending_exits.append((i + 1, pos, reason))
         # 2) pending entries due now
         due_e = [x for x in self.pending_entries if x[0] <= i]
         self.pending_entries = [x for x in self.pending_entries if x[0] > i]
@@ -108,6 +118,8 @@ class TradingCore:
                 continue
             value = self._mark(pos, ts)
             if value is None:
+                if is_last_bar and self._intraday(pos):
+                    self._close(pos, ts, "eod_exit", spot, force=True)
                 continue
             st = pos.exit_state
             if pos.entry_ts != ts:
@@ -116,7 +128,9 @@ class TradingCore:
                                    is_last_bar)
             if reason:
                 if self.cfg.fill_delay_bars == 0 or is_last_bar:
-                    self._close(pos, ts, reason, spot)
+                    if not self._close(pos, ts, reason, spot, force=is_last_bar and self._intraday(pos)):
+                        pos.exit_attempts += 1
+                        self.pending_exits.append((i + 1, pos, reason))
                 else:
                     self.pending_exits.append((i + self.cfg.fill_delay_bars, pos, reason))
         # 4) new signals
@@ -132,6 +146,10 @@ class TradingCore:
 
     def end_of_day(self, d: date) -> None:
         self.pending_entries.clear()
+        self.settle_expiring_today(d)
+
+    def _intraday(self, pos: OpenPosition) -> bool:
+        return self.s.cfg.exits.max_hold_days == 0
 
     # --------------------------------------------------------------- entries
     def _try_open(self, ev: SignalEvent, ts: datetime, spot: float, ctx: DayContext | None) -> None:
@@ -184,7 +202,7 @@ class TradingCore:
         rec = self._entry_record(ev, prop, lots, ts, spot, ctx, risk_rupees, budget_feasible)
         rec["position_id"] = pid
         pos = OpenPosition(pid, self.s.label, prop, lots, ts, list(prop.fill_prices), list(prop.mids), costs, slip,
-                           risk_rupees, self.s.new_exit_state(prop, ts), rec)
+                           risk_rupees, self.s.new_exit_state(prop, ts), rec, last_quotes=list(prop.quotes))
         self.positions.append(pos)
         self.risk.on_open(risk_rupees)
 
@@ -192,11 +210,17 @@ class TradingCore:
     def _mark(self, pos: OpenPosition, ts: datetime) -> float | None:
         legs = pos.proposal.built.structure.legs
         v = 0.0
+        quotes = []
         for leg in legs:
             q = self.md.quote(ts, leg.contract)
             if q is None:
                 return None
-            v += leg.ratio * self.fm.mid(q)
+            try:
+                v += leg.ratio * self.fm.mid(q)
+            except ValueError:
+                return None
+            quotes.append(q)
+        pos.last_quotes = quotes
         pos.last_value = v
         pnl_pts = v - pos.exit_state.entry_debit
         pos.mfe_points = max(pos.mfe_points, pnl_pts)
@@ -207,33 +231,56 @@ class TradingCore:
         tot = 0.0
         for p in self.positions:
             if math.isfinite(p.last_value):
-                tot += (p.last_value - p.entry_value_fill) * p.proposal.lot_size * p.lots
+                tot += (p.last_value - p.entry_value_fill) * p.proposal.lot_size * p.lots - p.entry_costs.total
         return tot
 
     # ----------------------------------------------------------------- exits
-    def _close(self, pos: OpenPosition, ts: datetime, reason: str, spot: float, settle_spot: float | None = None):
+    def _close(self, pos: OpenPosition, ts: datetime, reason: str, spot: float, settle_spot: float | None = None,
+               force: bool = False, flags: list[str] | None = None) -> bool:
+        """Close ``pos``. Returns False (position kept, caller retries) if a leg cannot be filled,
+        unless ``force``: then the last observed quote is used with a pessimistic fill, or intrinsic
+        value at ``spot`` if no quote was ever seen. Forced/settled exits are flagged on the trade."""
         if pos not in self.positions:
-            return
+            return True
         legs = pos.proposal.built.structure.legs
         lot, lots = pos.proposal.lot_size, pos.lots
         exit_prices, exit_mids, costs, slip = [], [], CostBreakdown(), 0.0
-        exit_quotes = []
-        for leg, units in zip(legs, pos.units_per_leg):
+        exit_quotes, exit_est = [], False
+        flags = list(flags or [])
+        for j, (leg, units) in enumerate(zip(legs, pos.units_per_leg)):
             if settle_spot is not None:
                 px = mid = leg.contract.intrinsic(settle_spot)
                 if leg.ratio > 0:
                     costs = costs + self.costs.exercise_costs(px, units, leg.contract.expiry)
                 exit_quotes.append(None)
             else:
-                q = self.md.quote(ts, leg.contract)
-                if q is None:
-                    # cannot exit without a quote: keep position, retry next bar
-                    self.rejections.append({"ts": ts, "stage": "exit", "strategy": pos.strategy,
-                                            "reasons": [f"no_exit_quote:{leg.contract.symbol}"]})
-                    return
                 side = Side.SELL if leg.ratio > 0 else Side.BUY
-                f = self.fm.fill(side, q)
-                px, mid = f.price, f.mid
+                q = self.md.quote(ts, leg.contract)
+                f = None
+                if q is not None:
+                    try:
+                        f = self.fm.fill(side, q)
+                    except ValueError:
+                        f = None
+                if f is None:
+                    self.rejections.append({"ts": ts, "stage": "exit", "strategy": pos.strategy,
+                                            "reasons": [f"no_exit_fill:{leg.contract.symbol}"]})
+                    if not force:
+                        return False
+                    last = pos.last_quotes[j] if j < len(pos.last_quotes) else None
+                    try:
+                        f = self._stale_fm.fill(side, last) if last is not None else None
+                    except ValueError:
+                        f = None
+                    if f is not None:
+                        flags.append(f"stale_exit_quote:{leg.contract.symbol}")
+                    else:
+                        iv = leg.contract.intrinsic(spot)
+                        flags.append(f"exit_at_intrinsic:{leg.contract.symbol}")
+                        px = mid = iv
+                if f is not None:
+                    px, mid = f.price, f.mid
+                    exit_est = exit_est or f.spread_estimated
                 costs = costs + self.costs.order_costs(side, px, units, ts.date())
                 exit_quotes.append(q)
             exit_prices.append(px)
@@ -253,7 +300,7 @@ class TradingCore:
             "exit_prices": exit_prices, "exit_mids": exit_mids,
             "exit_bid": [q.bid if q else None for q in exit_quotes],
             "exit_ask": [q.ask if q else None for q in exit_quotes],
-            "exit_value": exit_value,
+            "exit_value": exit_value, "exit_spread_estimated": exit_est, "exit_flags": flags + pos.flags,
             "holding_minutes": (ts - pos.entry_ts).total_seconds() / 60.0,
             "bars_held": pos.exit_state.bars_held,
             "gross_pnl": gross, "fees": fees, "fees_entry": pos.entry_costs.total, "fees_exit": costs.total,
@@ -268,6 +315,7 @@ class TradingCore:
             "equity_after": self.risk.equity,
         })
         self.trades.append(r)
+        return True
 
     def new_day(self, d: date) -> None:
         """Call at the start of each session, before any step()."""
@@ -275,15 +323,45 @@ class TradingCore:
         for pos in self.positions:
             pos.exit_state.days_held += 1
 
+    def settle_expiring_today(self, d: date) -> None:
+        """At the close of day d, cash-settle anything expiring today (normally already exited)."""
+        for pos in list(self.positions):
+            if pos.proposal.built.expiry == d:
+                bars = self.md.underlying_bars(d)
+                if len(bars):
+                    px = float(bars["close"].iloc[-1])   # NOTE: proxy for NSE's official settlement price
+                    self._close(pos, bars["ts"].iloc[-1], "expiry_settlement", px, settle_spot=px)
+
     def settle_expired(self, d: date) -> None:
+        """Positions whose expiry passed without being settled (missing data on expiry day):
+        settle at the last available close on/before expiry and flag it. Never drop a position."""
         for pos in list(self.positions):
             e = pos.proposal.built.expiry
-            if e < d:
-                bars = self.md.underlying_bars(e)
-                if not len(bars):
-                    continue
-                self._close(pos, bars["ts"].iloc[-1], "expiry_settlement", float(bars["close"].iloc[-1]),
-                            settle_spot=float(bars["close"].iloc[-1]))
+            if e >= d:
+                continue
+            bars = self.md.underlying_bars(e)
+            flags = []
+            if not len(bars):
+                prior = [x for x in self.md.trading_days() if x <= e]
+                for x in reversed(prior):
+                    bars = self.md.underlying_bars(x)
+                    if len(bars):
+                        break
+                flags.append("proxy_settlement_spot")
+            if len(bars):
+                px, ts = float(bars["close"].iloc[-1]), bars["ts"].iloc[-1]
+            else:
+                px, ts = pos.exit_state.features.get("spot", math.nan), pos.entry_ts
+                flags.append("settled_at_entry_spot_no_data")
+            self._close(pos, ts, "expiry_settlement", px, settle_spot=px, flags=flags)
+
+    def force_close_all(self, ts: datetime, spot: float, reason: str) -> None:
+        d = ts.date()
+        for pos in list(self.positions):
+            if pos.proposal.built.expiry < d:
+                self.settle_expired(d)
+            elif not self._close(pos, ts, reason, spot, force=True):  # pragma: no cover - force always closes
+                raise RuntimeError(f"could not close {pos.position_id}")
 
     # -------------------------------------------------------------- records
     def _reject(self, ev: SignalEvent, ts, stage: str, reasons: list[str], prop: Proposal | None = None, built=None):
@@ -389,11 +467,14 @@ class Backtester:
             daily.append({"date": d, "equity": risk.equity + core.unrealized(), "realized_equity": risk.equity,
                           "unrealized": core.unrealized(), "open_risk": risk.open_risk,
                           "halted": risk.halted_reason})
-        # force-close anything still open at the end of the test window
+        # force-close anything still open at the end of the test window (never drop positions)
         if core.positions and days:
             last = self.md.underlying_bars(days[-1])
-            for pos in list(core.positions):
-                core._close(pos, last["ts"].iloc[-1], "end_of_backtest", float(last["close"].iloc[-1]))
+            core.force_close_all(last["ts"].iloc[-1], float(last["close"].iloc[-1]), "end_of_backtest")
+            if daily:
+                daily[-1].update({"equity": risk.equity, "realized_equity": risk.equity, "unrealized": 0.0,
+                                  "open_risk": risk.open_risk})
+        assert not core.positions, "positions left open after backtest"
         meta = {"data_version": self.md.data_version, "is_synthetic": self.md.is_synthetic,
                 "fill_model": self.fm.name.value, "mode": self.core_cfg.mode,
                 "strategy": strategy.cfg.to_dict(), "label": strategy.label,
