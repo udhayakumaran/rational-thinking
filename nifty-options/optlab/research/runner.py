@@ -108,8 +108,6 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
     contexts = build_day_contexts(md)
     core = CoreConfig(mode="research", fill_delay_bars=gcfg["engine"]["fill_delay_bars"])
     bt = {k: Backtester(md, fm, costs, limits, core, contexts) for k, fm in fills.items()}
-    bt_port = Backtester(md, fills["realistic"], costs, limits,
-                         CoreConfig(mode="portfolio", fill_delay_bars=core.fill_delay_bars), contexts)
 
     days = md.trading_days()
     split = chronological_split(days, tuple(spec.get("split", (0.6, 0.2, 0.2))))
@@ -126,6 +124,10 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
     variants_out = {}
     for vname, overrides in spec["variants"].items():
         log(f"  variant {vname}")
+        overrides = dict(overrides or {})
+        v_limits = RiskLimits.from_config({**gcfg["risk"], **spec.get("risk", {}), **overrides.pop("risk", {})})
+        v_port = Backtester(md, fills["realistic"], costs, v_limits,
+                            CoreConfig(mode="portfolio", fill_delay_bars=core.fill_delay_bars), contexts)
         vcfg = base
         for path, val in _flatten(overrides).items():
             vcfg = set_path(vcfg, path, val)
@@ -156,13 +158,13 @@ def run_experiment(spec_path: str | Path, workers: int = 4, db: str | None = Non
             stress[fm_name] = r
         pess_oos = slice_trades(stress["pessimistic"].trades, test)
         # Rs 1L portfolio simulation with full risk limits
-        port = bt_port.run(Strategy(chosen_cfg, md))
+        port = v_port.run(Strategy(chosen_cfg, md))
         port_m = full_metrics(port)
-        mc = monte_carlo(oos["r_multiple"], limits.initial_capital, limits.risk_per_trade_pct,
+        mc = monte_carlo(oos["r_multiple"], v_limits.initial_capital, v_limits.risk_per_trade_pct,
                          n_trades=max(len(oos), 100), n_sims=spec.get("monte_carlo", {}).get("n_sims", 5000),
                          block=spec.get("monte_carlo", {}).get("block", 5)) if len(oos) else None
         verdict = evaluate(res.trades, tr_t, oos, pessimistic_oos_trades=pess_oos, plateau_same_sign=plateau_same,
-                           portfolio_max_dd=port_m.get("max_drawdown_pct"), mc_p_dd20=mc.p_dd_20 if mc else None, th=th)
+                           portfolio_max_dd=port_m.get("max_drawdown_pct") if port_m.get("trades", 0) else None, mc_p_dd20=mc.p_dd_20 if mc else None, th=th)
         # persist chosen-config runs
         run_ids = {}
         for tag, r in (("realistic", res), ("optimistic", stress["optimistic"]),

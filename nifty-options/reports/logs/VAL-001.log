@@ -1,0 +1,8 @@
+[VAL-001] data=SYNTH-NULL-4548030d20 synthetic=True days=783
+  variant A_long_atm
+    grid: 9 points done
+    -> REJECT score=38.3 OOS E[R]=-0.019812782086296166
+  variant B_atm_to_otm100
+    grid: 9 points done
+    -> REJECT score=36.1 OOS E[R]=-0.06839923952404024
+  variant C_itm50_to_otm100

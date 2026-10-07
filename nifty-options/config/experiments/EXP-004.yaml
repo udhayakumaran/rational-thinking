@@ -1,0 +1,77 @@
+# Capital feasibility: risk per trade 0.5/1/1.5/2% and narrow 50-pt spreads
+# Requires real data. Variant expression for EXP-002..005 is fixed AFTER EXP-001 (record the choice in docs/EXPERIMENTS.md before running).
+id: EXP-004
+title: 'Capital feasibility: risk per trade 0.5/1/1.5/2% and narrow 50-pt spreads'
+hypothesis: With NIFTY lot sizes, Rs 1L at 1% risk (Rs 1,000) may be unable to fund
+  one lot of most debit structures; measure the share of signals that are tradable
+  and the resulting portfolio path at each risk level.
+data:
+  source: db
+  data_version: REPLACE_WITH_REAL_DATA_VERSION
+  bar_minutes: 5
+base_strategy:
+  name: orb15
+  version: '1'
+  signal: orb
+  signal_params:
+    or_minutes: 15
+    require_vwap: true
+    momentum_bars: 3
+    momentum_min_pct: 0.0
+    entry_start: 09:30
+    entry_end: '14:00'
+  structure:
+    kind: debit_spread
+    long_offset_steps: 0
+    width_points: 100
+    min_dte: 1
+  exits:
+    stop_loss_pct: 0.5
+    eod_exit_time: '15:15'
+    max_hold_days: 0
+  liquidity:
+    max_rel_spread: 0.05
+    min_premium: 2.0
+variants:
+  R050_w50:
+    structure:
+      width_points: 50
+    risk:
+      risk_per_trade_pct: 0.005
+  R100_w50:
+    structure:
+      width_points: 50
+    risk:
+      risk_per_trade_pct: 0.01
+  R100_w100:
+    structure:
+      width_points: 100
+    risk:
+      risk_per_trade_pct: 0.01
+  R150_w100:
+    structure:
+      width_points: 100
+    risk:
+      risk_per_trade_pct: 0.015
+  R200_w100:
+    structure:
+      width_points: 100
+    risk:
+      risk_per_trade_pct: 0.02
+  R200_w50_otm1:
+    structure:
+      width_points: 50
+      long_offset_steps: 1
+    risk:
+      risk_per_trade_pct: 0.02
+grid: {}
+split:
+- 0.6
+- 0.2
+- 0.2
+walk_forward:
+  train_days: 250
+  test_days: 63
+monte_carlo:
+  n_sims: 5000
+  block: 5

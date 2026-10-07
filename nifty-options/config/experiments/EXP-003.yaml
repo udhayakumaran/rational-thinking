@@ -1,0 +1,79 @@
+# Exit-mechanism comparison on the ORB15 debit spread
+# Requires real data. Variant expression for EXP-002..005 is fixed AFTER EXP-001 (record the choice in docs/EXPERIMENTS.md before running).
+id: EXP-003
+title: Exit-mechanism comparison on the ORB15 debit spread
+hypothesis: Exit choice changes expectancy; compare % of max-profit targets, stops,
+  time stops, invalidation and hold-to-expiry on expectancy (not win rate).
+data:
+  source: db
+  data_version: REPLACE_WITH_REAL_DATA_VERSION
+  bar_minutes: 5
+base_strategy:
+  name: orb15
+  version: '1'
+  signal: orb
+  signal_params:
+    or_minutes: 15
+    require_vwap: true
+    momentum_bars: 3
+    momentum_min_pct: 0.0
+    entry_start: 09:30
+    entry_end: '14:00'
+  structure:
+    kind: debit_spread
+    long_offset_steps: 0
+    width_points: 100
+    min_dte: 1
+  exits:
+    stop_loss_pct: 0.5
+    eod_exit_time: '15:15'
+    max_hold_days: 0
+  liquidity:
+    max_rel_spread: 0.05
+    min_premium: 2.0
+variants:
+  X0_sl50_eod:
+    exits:
+      stop_loss_pct: 0.5
+  X1_tp25:
+    exits:
+      target_pct_max_profit: 0.25
+  X2_tp40:
+    exits:
+      target_pct_max_profit: 0.4
+  X3_tp50:
+    exits:
+      target_pct_max_profit: 0.5
+  X4_tp70:
+    exits:
+      target_pct_max_profit: 0.7
+  X5_no_stop_eod:
+    exits:
+      stop_loss_pct: null
+  X6_invalidate_ormid:
+    exits:
+      underlying_invalidation: or_mid
+  X7_time_stop_12bars:
+    exits:
+      time_stop_bars: 12
+  X8_trailing_30:
+    exits:
+      trailing_stop_pct: 0.3
+  X9_hold_to_expiry:
+    exits:
+      stop_loss_pct: null
+      eod_exit_time: null
+      max_hold_days: 5
+    structure:
+      min_dte: 1
+grid: {}
+split:
+- 0.6
+- 0.2
+- 0.2
+walk_forward:
+  train_days: 250
+  test_days: 63
+monte_carlo:
+  n_sims: 5000
+  block: 5

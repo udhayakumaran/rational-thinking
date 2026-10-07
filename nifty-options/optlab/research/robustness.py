@@ -143,7 +143,7 @@ def evaluate(all_trades: pd.DataFrame, is_trades: pd.DataFrame, oos_trades: pd.D
             "net > 0 whenever theoretical > 0")
     if plateau_same_sign is not None:
         add("parameter_plateau", plateau_same_sign >= th.min_plateau_same_sign, round(plateau_same_sign, 3),
-            f"share of neighbours with same-sign OOS expectancy >= {th.min_plateau_same_sign}", fail_hard=False)
+            f"share of neighbours with positive val+test expectancy >= {th.min_plateau_same_sign}", fail_hard=False)
     if portfolio_max_dd is not None:
         add("portfolio_max_drawdown", portfolio_max_dd <= th.max_portfolio_dd, round(portfolio_max_dd, 4),
             f"<= {th.max_portfolio_dd}")

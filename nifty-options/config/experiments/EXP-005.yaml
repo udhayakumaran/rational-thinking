@@ -1,0 +1,58 @@
+# Expiry / DTE selection for the ORB15 debit spread
+# Requires real data. Variant expression for EXP-002..005 is fixed AFTER EXP-001 (record the choice in docs/EXPERIMENTS.md before running).
+id: EXP-005
+title: Expiry / DTE selection for the ORB15 debit spread
+hypothesis: Theta and gamma differ sharply between expiry-day, 1-3 DTE and next-week
+  options; the same intraday signal may only be monetisable at some tenors.
+data:
+  source: db
+  data_version: REPLACE_WITH_REAL_DATA_VERSION
+  bar_minutes: 5
+base_strategy:
+  name: orb15
+  version: '1'
+  signal: orb
+  signal_params:
+    or_minutes: 15
+    require_vwap: true
+    momentum_bars: 3
+    momentum_min_pct: 0.0
+    entry_start: 09:30
+    entry_end: '14:00'
+  structure:
+    kind: debit_spread
+    long_offset_steps: 0
+    width_points: 100
+    min_dte: 1
+  exits:
+    stop_loss_pct: 0.5
+    eod_exit_time: '15:15'
+    max_hold_days: 0
+  liquidity:
+    max_rel_spread: 0.05
+    min_premium: 2.0
+variants:
+  E0_dte0_allowed:
+    structure:
+      min_dte: 0
+  E1_min_dte1:
+    structure:
+      min_dte: 1
+  E2_min_dte3:
+    structure:
+      min_dte: 3
+  E3_next_expiry:
+    structure:
+      min_dte: 1
+      expiry_rank: 1
+grid: {}
+split:
+- 0.6
+- 0.2
+- 0.2
+walk_forward:
+  train_days: 250
+  test_days: 63
+monte_carlo:
+  n_sims: 5000
+  block: 5

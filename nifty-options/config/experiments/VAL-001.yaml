@@ -1,0 +1,76 @@
+# Pipeline validation - EXP-001 design on SYNTHETIC NULL market
+# Experiments are immutable once run: create a new ID for any change.
+id: VAL-001
+title: Pipeline validation - EXP-001 design on SYNTHETIC NULL market
+hypothesis: Strong directional NIFTY moves (15-min opening-range breakout confirmed
+  by VWAP and short-term momentum) may be expressed more efficiently through debit
+  spreads than through naked long options.
+data:
+  source: synthetic
+  synthetic:
+    start: '2023-01-02'
+    end: '2025-12-31'
+    seed: 7
+    edge_strength: 0.0
+base_strategy:
+  name: orb15
+  version: '1'
+  signal: orb
+  signal_params:
+    or_minutes: 15
+    require_vwap: true
+    momentum_bars: 3
+    momentum_min_pct: 0.0
+    entry_start: 09:30
+    entry_end: '14:00'
+  structure:
+    kind: debit_spread
+    long_offset_steps: 0
+    width_points: 100
+    min_dte: 1
+  exits:
+    stop_loss_pct: 0.5
+    eod_exit_time: '15:15'
+    max_hold_days: 0
+  liquidity:
+    max_rel_spread: 0.05
+    min_premium: 2.0
+variants:
+  A_long_atm:
+    structure:
+      kind: long_option
+      long_offset_steps: 0
+  B_atm_to_otm100:
+    structure:
+      kind: debit_spread
+      long_offset_steps: 0
+      width_points: 100
+  C_itm50_to_otm100:
+    structure:
+      kind: debit_spread
+      long_offset_steps: -1
+      width_points: 150
+  D_atm_wide300:
+    structure:
+      kind: debit_spread
+      long_offset_steps: 0
+      width_points: 300
+grid:
+  signal_params.momentum_min_pct:
+  - 0.0
+  - 0.05
+  - 0.1
+  exits.stop_loss_pct:
+  - 0.3
+  - 0.5
+  - 0.7
+split:
+- 0.6
+- 0.2
+- 0.2
+walk_forward:
+  train_days: 250
+  test_days: 63
+monte_carlo:
+  n_sims: 5000
+  block: 5

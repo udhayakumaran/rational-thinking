@@ -82,7 +82,8 @@ def neighbours(point: tuple, grid: dict[str, list]) -> list[tuple]:
 
 
 def plateau_scores(gr: GridResult, window: Window | None = None, metric: str = "exp_r") -> pd.DataFrame:
-    """For each point: neighbourhood mean, share of neighbours with the same sign,
+    """For each point: neighbourhood mean, share of neighbours that are also POSITIVE
+    (0 when the point itself is not positive - a plateau of losers is not robustness),
     and a 'robust value' = min(point, neighbourhood mean). Isolated peaks score low."""
     tab = gr.table(window)
     keys = list(gr.grid)
@@ -92,7 +93,10 @@ def plateau_scores(gr: GridResult, window: Window | None = None, metric: str = "
         v = val[pt]
         nb = [val[n] for n in neighbours(pt, gr.grid) if np.isfinite(val[n])]
         nb_mean = float(np.mean(nb)) if nb else math.nan
-        same = float(np.mean([np.sign(x) == np.sign(v) for x in nb])) if nb and np.isfinite(v) else math.nan
+        if not (nb and np.isfinite(v)):
+            same = math.nan
+        else:
+            same = float(np.mean([x > 0 for x in nb])) if v > 0 else 0.0
         rows.append({**dict(zip(keys, pt)), metric: v, "nb_mean": nb_mean, "nb_same_sign": same,
                      "robust_value": min(v, nb_mean) if np.isfinite(v) and np.isfinite(nb_mean) else math.nan})
     return pd.DataFrame(rows)

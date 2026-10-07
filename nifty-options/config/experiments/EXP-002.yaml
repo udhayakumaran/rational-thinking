@@ -1,0 +1,71 @@
+# ORB15 single-filter ablation (one filter at a time)
+# Requires real data. Variant expression for EXP-002..005 is fixed AFTER EXP-001 (record the choice in docs/EXPERIMENTS.md before running).
+id: EXP-002
+title: ORB15 single-filter ablation (one filter at a time)
+hypothesis: Each candidate filter must improve OUT-OF-SAMPLE expectancy versus the
+  unfiltered baseline without collapsing sample size; filters that do not are discarded.
+data:
+  source: db
+  data_version: REPLACE_WITH_REAL_DATA_VERSION
+  bar_minutes: 5
+base_strategy:
+  name: orb15
+  version: '1'
+  signal: orb
+  signal_params:
+    or_minutes: 15
+    require_vwap: true
+    momentum_bars: 3
+    momentum_min_pct: 0.0
+    entry_start: 09:30
+    entry_end: '14:00'
+  structure:
+    kind: debit_spread
+    long_offset_steps: 0
+    width_points: 100
+    min_dte: 1
+  exits:
+    stop_loss_pct: 0.5
+    eod_exit_time: '15:15'
+    max_hold_days: 0
+  liquidity:
+    max_rel_spread: 0.05
+    min_premium: 2.0
+variants:
+  F0_baseline: {}
+  F1_no_vwap:
+    signal_params:
+      require_vwap: false
+  F2_vix_max_16:
+    signal_params:
+      vix_max: 16.0
+  F3_vix_min_12:
+    signal_params:
+      vix_min: 12.0
+  F4_trend_align:
+    signal_params:
+      trend_align: true
+  F5_gap_le_0_5pct:
+    signal_params:
+      max_abs_gap_pct: 0.5
+  F6_skip_expiry:
+    signal_params:
+      skip_expiry_day: true
+  F7_or_width_ge_0_3:
+    signal_params:
+      min_or_width_pct: 0.3
+  F8_rsi_55:
+    signal_params:
+      rsi_len: 14
+      rsi_long_min: 55.0
+grid: {}
+split:
+- 0.6
+- 0.2
+- 0.2
+walk_forward:
+  train_days: 250
+  test_days: 63
+monte_carlo:
+  n_sims: 5000
+  block: 5
