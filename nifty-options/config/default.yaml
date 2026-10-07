@@ -18,15 +18,20 @@ risk:
   max_lots_per_trade: 10
   max_concurrent_positions: 3
 
-costs:                            # VERIFY against latest NSE/SEBI/Finance Act notices
+costs:                            # reviewed 2026-10; items marked VERIFY are medium confidence
   brokerage_per_order: 20.0
-  exchange_txn_pct: 0.0003503
+  exchange_schedule:              # NSE options transaction charge, % of premium
+    - {effective_from: 2000-01-01, pct: 0.00053}     # VERIFY
+    - {effective_from: 2023-01-01, pct: 0.000495}    # VERIFY date
+    - {effective_from: 2024-10-01, pct: 0.0003503}
   sebi_pct: 0.000001
   stamp_buy_pct: 0.00003
   gst_pct: 0.18
   exercise_brokerage: 0.0
   stt_schedule:
-    - {effective_from: 2000-01-01, sell_premium_pct: 0.000625, exercise_intrinsic_pct: 0.00125}
+    - {effective_from: 2000-01-01, sell_premium_pct: 0.00017,  exercise_intrinsic_pct: 0.00125}
+    - {effective_from: 2016-06-01, sell_premium_pct: 0.0005,   exercise_intrinsic_pct: 0.00125}
+    - {effective_from: 2023-04-01, sell_premium_pct: 0.000625, exercise_intrinsic_pct: 0.00125}
     - {effective_from: 2024-10-01, sell_premium_pct: 0.001,    exercise_intrinsic_pct: 0.00125}
     - {effective_from: 2026-04-01, sell_premium_pct: 0.0015,   exercise_intrinsic_pct: 0.0015}
 

@@ -34,10 +34,20 @@ class SttRate:
     exercise_intrinsic_pct: float
 
 
+# Sources checked by independent review (2026-10): Finance Acts 2016/2023/2024/2026.
 DEFAULT_STT_SCHEDULE = (
-    SttRate(date(2000, 1, 1), 0.000625, 0.00125),
-    SttRate(date(2024, 10, 1), 0.001, 0.00125),
-    SttRate(date(2026, 4, 1), 0.0015, 0.0015),  # VERIFY: Union Budget 2026 revision
+    SttRate(date(2000, 1, 1), 0.00017, 0.00125),    # pre-2016 exercise STT was on settlement value (approx.)
+    SttRate(date(2016, 6, 1), 0.0005, 0.00125),
+    SttRate(date(2023, 4, 1), 0.000625, 0.00125),   # Finance Act 2023
+    SttRate(date(2024, 10, 1), 0.001, 0.00125),     # Finance Act 2024
+    SttRate(date(2026, 4, 1), 0.0015, 0.0015),      # Union Budget 2026
+)
+
+# NSE options transaction charge (% of premium). Pre-Oct-2024 values: medium confidence.
+DEFAULT_EXCHANGE_SCHEDULE = (
+    (date(2000, 1, 1), 0.00053),      # VERIFY exact history
+    (date(2023, 1, 1), 0.000495),     # VERIFY effective date
+    (date(2024, 10, 1), 0.0003503),   # flat rate from 2024-10-01 (confirmed)
 )
 
 
@@ -62,7 +72,8 @@ class CostBreakdown:
 @dataclass
 class CostModel:
     brokerage_per_order: float = 20.0
-    exchange_txn_pct: float = 0.0003503   # VERIFY: NSE options, % of premium
+    exchange_txn_pct: float | None = None  # if set, overrides the dated schedule (flat rate)
+    exchange_schedule: tuple = field(default=DEFAULT_EXCHANGE_SCHEDULE)
     sebi_pct: float = 0.000001            # Rs 10 per crore
     stamp_buy_pct: float = 0.00003
     gst_pct: float = 0.18
@@ -73,13 +84,19 @@ class CostModel:
         idx = bisect.bisect_right([s.effective_from for s in self.stt_schedule], d) - 1
         return self.stt_schedule[max(idx, 0)]
 
+    def exchange_rate(self, d: date) -> float:
+        if self.exchange_txn_pct is not None:
+            return self.exchange_txn_pct
+        idx = bisect.bisect_right([s[0] for s in self.exchange_schedule], d) - 1
+        return self.exchange_schedule[max(idx, 0)][1]
+
     def order_costs(self, side: Side, price: float, units: int, trade_date: date) -> CostBreakdown:
         """Costs for one executed order of ``units`` (= lots * lot_size) at ``price``."""
         if units <= 0:
             return CostBreakdown()
         turnover = price * units
         brokerage = self.brokerage_per_order
-        exchange = turnover * self.exchange_txn_pct
+        exchange = turnover * self.exchange_rate(trade_date)
         sebi = turnover * self.sebi_pct
         stamp = turnover * self.stamp_buy_pct if side is Side.BUY else 0.0
         stt = turnover * self.stt_rate(trade_date).sell_premium_pct if side is Side.SELL else 0.0
@@ -98,7 +115,10 @@ class CostModel:
     def from_config(cls, cfg: dict) -> "CostModel":
         cfg = dict(cfg or {})
         sched = cfg.pop("stt_schedule", None)
+        ex = cfg.pop("exchange_schedule", None)
         model = cls(**cfg)
+        if ex:
+            model.exchange_schedule = tuple((date.fromisoformat(str(e["effective_from"])), float(e["pct"])) for e in ex)
         if sched:
             model.stt_schedule = tuple(
                 SttRate(date.fromisoformat(str(s["effective_from"])), float(s["sell_premium_pct"]),
@@ -106,5 +126,5 @@ class CostModel:
         return model
 
 
-ZERO_COSTS = CostModel(brokerage_per_order=0, exchange_txn_pct=0, sebi_pct=0, stamp_buy_pct=0, gst_pct=0,
+ZERO_COSTS = CostModel(brokerage_per_order=0, exchange_txn_pct=0.0, sebi_pct=0, stamp_buy_pct=0, gst_pct=0,
                        stt_schedule=(SttRate(date(2000, 1, 1), 0.0, 0.0),))

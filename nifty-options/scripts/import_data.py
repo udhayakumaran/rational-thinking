@@ -19,7 +19,7 @@ import pandas as pd  # noqa: E402
 import yaml  # noqa: E402
 
 from optlab.config import db_url, load_config  # noqa: E402
-from optlab.core.calendar import TradingCalendar, lot_size_on  # noqa: E402
+from optlab.core.calendar import TradingCalendar, lot_size_for_expiry  # noqa: E402
 from optlab.data import loaders as L  # noqa: E402
 from optlab.data.quality import check_options, check_underlying, summarize  # noqa: E402
 from optlab.data.store import write_normalized  # noqa: E402
@@ -63,7 +63,11 @@ def main():
     if not ok and not a.force:
         print(f"\nERROR-level data issues; not importing {version}. Fix the data or pass --force (documented).")
         sys.exit(2)
-    ex = L.expiries_from_options(opt, lot_size_on, cal)
+    # lot sizes: vendor/bhavcopy values win; schedule only as a fallback
+    ex = L.expiries_from_options(opt, lot_size_for_expiry, cal)
+    if a.kind == "bhavcopy" and any(l is not None for l in lots):
+        vend = pd.concat([l for l in lots if l is not None]).drop_duplicates("expiry").set_index("expiry")["lot_size"]
+        ex["lot_size"] = [int(vend.get(e, ls)) for e, ls in zip(ex.expiry, ex.lot_size)]
     n = write_normalized(db_url(load_config()), version, "NIFTY", {"INDEX": idx, "FUT": fut, "VIX": vix},
                          opt.drop(columns=[c for c in ("settle",) if c in opt]), ex, interval)
     print(f"\nimported data_version={version}: {n}\nSet this data_version in config/experiments/EXP-*.yaml")

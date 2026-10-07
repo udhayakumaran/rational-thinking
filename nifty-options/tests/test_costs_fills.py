@@ -22,9 +22,17 @@ def test_buy_order_costs_by_hand():
     assert b.gst == pytest.approx(0.18 * (20 + 7500 * 0.0003503 + 7500 * 1e-6))
 
 
+def test_dated_exchange_charge():
+    cm = CostModel()
+    assert cm.exchange_rate(date(2024, 9, 30)) == 0.000495 and cm.exchange_rate(D) == 0.0003503
+
+
 def test_sell_order_stt_schedule():
     cm = CostModel()
+    assert cm.order_costs(Side.SELL, 100.0, 75, date(2015, 1, 5)).stt == pytest.approx(7500 * 0.00017)
+    assert cm.order_costs(Side.SELL, 100.0, 75, date(2022, 1, 5)).stt == pytest.approx(7500 * 0.0005)
     assert cm.order_costs(Side.SELL, 100.0, 75, date(2024, 9, 30)).stt == pytest.approx(7500 * 0.000625)
+    assert cm.order_costs(Side.SELL, 100.0, 75, date(2026, 5, 4)).stt == pytest.approx(7500 * 0.0015)
     assert cm.order_costs(Side.SELL, 100.0, 75, D).stt == pytest.approx(7500 * 0.001)
     assert cm.order_costs(Side.SELL, 100.0, 75, D).stamp == 0.0
 

@@ -27,7 +27,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from ..core.calendar import TradingCalendar, iter_session_bars, lot_size_on, minutes_to_expiry
+from ..core.calendar import TradingCalendar, iter_session_bars, lot_size_for_expiry, lot_size_on, minutes_to_expiry
 from ..core.instruments import OptionContract, Right
 from ..core.market import TICK, Quote
 from ..core.pricing import bs_greeks, bs_price, bs_price_scalar, year_fraction
@@ -162,7 +162,7 @@ class SyntheticMarketData(MarketData):
         return [e for e in self._all_expiries if e in listed]
 
     def lot_size(self, d: date, expiry: date | None = None) -> int:
-        return self.cfg.lot_size or lot_size_on(d)
+        return self.cfg.lot_size or (lot_size_for_expiry(expiry) if expiry else lot_size_on(d))
 
     def _strikes(self, d: date) -> np.ndarray:
         c = self.cfg

@@ -18,7 +18,7 @@ from datetime import date, datetime
 
 import pandas as pd
 
-from ..core.calendar import TradingCalendar, lot_size_on
+from ..core.calendar import TradingCalendar, lot_size_for_expiry, lot_size_on
 from ..core.instruments import OptionContract, Right
 from ..core.market import Quote
 from ..data.interfaces import BAR_COLUMNS, CHAIN_COLUMNS, MarketData
@@ -88,7 +88,9 @@ class LiveMarketData(MarketData):
 
     def lot_size(self, d: date, expiry: date | None = None) -> int:
         nxt = [l for e, l in self._exp if (e == expiry if expiry else e >= d)]
-        return nxt[0] if nxt else lot_size_on(d)
+        if nxt:
+            return nxt[0]
+        return lot_size_for_expiry(expiry) if expiry else lot_size_on(d)
 
     def chain(self, ts: datetime, expiry: date) -> pd.DataFrame:
         return self._chains.get((ts, expiry), pd.DataFrame(columns=CHAIN_COLUMNS))

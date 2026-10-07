@@ -1,6 +1,6 @@
 from datetime import date
 
-from optlab.core.calendar import TradingCalendar, lot_size_on
+from optlab.core.calendar import TradingCalendar, lot_size_for_expiry, lot_size_on
 
 
 def test_weekly_expiry_weekday_switch():
@@ -28,6 +28,11 @@ def test_dte_and_trading_days():
     assert cal.trading_days_to_expiry(date(2025, 10, 3), date(2025, 10, 7)) == 2   # Fri -> Tue
 
 
-def test_lot_size_schedule():
-    assert lot_size_on(date(2025, 6, 1)) == 75
+def test_lot_size_schedule_is_by_expiry():
+    assert lot_size_for_expiry(date(2025, 6, 26)) == 75
+    assert lot_size_for_expiry(date(2025, 12, 30)) == 75     # Dec-2025 monthly kept 75
+    assert lot_size_for_expiry(date(2026, 1, 6)) == 65       # first 65-lot weekly
+    assert lot_size_for_expiry(date(2021, 7, 29)) == 50      # Jul-2021 series, even if traded in May
+    assert lot_size_for_expiry(date(2024, 4, 25)) == 50
+    assert lot_size_for_expiry(date(2024, 5, 2)) == 25
     assert lot_size_on(date(2026, 3, 1)) == 65

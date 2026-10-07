@@ -45,7 +45,7 @@ def bs_greeks(s, k, t, r, q, sigma, is_call) -> dict[str, np.ndarray]:
     pdf = norm.pdf(d1)
     sq = np.sqrt(tt)
     delta = np.where(is_call, df_q * norm.cdf(d1), df_q * (norm.cdf(d1) - 1))
-    gamma = df_q * pdf / (s * sigma * sq)
+    gamma = df_q * pdf / (s * np.maximum(sigma, 1e-6) * sq)
     common = -s * df_q * pdf * sigma / (2 * sq)
     theta_c = common - r * k * df_r * norm.cdf(d2) + q * s * df_q * norm.cdf(d1)
     theta_p = common + r * k * df_r * norm.cdf(-d2) - q * s * df_q * norm.cdf(-d1)
@@ -70,7 +70,7 @@ def implied_vol(price: float, s: float, k: float, t: float, r: float, q: float, 
 
     try:
         if f(lo) > 0:
-            return lo
+            return math.nan   # price at/below the ~zero-vol value: IV not identifiable
         if f(hi) < 0:
             return math.nan
         return brentq(f, lo, hi, xtol=1e-7, maxiter=200)

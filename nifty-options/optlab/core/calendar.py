@@ -23,21 +23,31 @@ SESSION_OPEN = time(9, 15)
 SESSION_CLOSE = time(15, 30)
 TUESDAY_SWITCH = date(2025, 9, 1)
 
-# (effective_from, lot_size). UNVERIFIED historical schedule - prefer data.
+# NSE applies lot sizes per CONTRACT SERIES, so the schedule is keyed by the
+# contract's EXPIRY: (first expiry date using the lot size, lot size).
+# Reviewed 2026-10 against NSE circulars/broker bulletins. The real data's
+# instrument master always wins over this table.
 NIFTY_LOT_SIZE_SCHEDULE: list[tuple[date, int]] = [
-    (date(2015, 1, 1), 75),
-    (date(2021, 7, 1), 50),   # UNVERIFIED effective date
-    (date(2024, 4, 26), 25),  # UNVERIFIED effective date
-    (date(2024, 11, 20), 75),  # SEBI contract-size revision (new series)
-    (date(2025, 12, 31), 65),  # UNVERIFIED: semi-annual revision, Jan-2026 series
+    (date(2000, 1, 1), 25),
+    (date(2015, 11, 1), 75),   # medium-low confidence on the exact switch
+    (date(2021, 7, 1), 50),    # contracts expiring Jul-2021 onward (circular 2021-03-31)
+    (date(2024, 5, 1), 25),    # effective 2024-04-26; first weekly expiring 2024-05-02
+    (date(2024, 12, 1), 75),   # new series listed from 2024-11-20. CAVEAT: the Dec-2024 monthly
+                               # listed earlier kept 25 until expiry - take lots from data
+    (date(2025, 12, 31), 65),  # weeklies from 2026-01-06; monthlies 75 through 2025-12-30
 ]
 
 
-def lot_size_on(d: date, schedule: list[tuple[date, int]] = NIFTY_LOT_SIZE_SCHEDULE) -> int:
-    idx = bisect.bisect_right([s[0] for s in schedule], d) - 1
+def lot_size_for_expiry(expiry: date, schedule: list[tuple[date, int]] = NIFTY_LOT_SIZE_SCHEDULE) -> int:
+    idx = bisect.bisect_right([s[0] for s in schedule], expiry) - 1
     if idx < 0:
-        raise ValueError(f"no lot size defined for {d}")
+        raise ValueError(f"no lot size defined for expiry {expiry}")
     return schedule[idx][1]
+
+
+def lot_size_on(d: date, schedule: list[tuple[date, int]] = NIFTY_LOT_SIZE_SCHEDULE) -> int:
+    """Approximation when the contract expiry is unknown: the series expiring on/after ``d``."""
+    return lot_size_for_expiry(d, schedule)
 
 
 @dataclass

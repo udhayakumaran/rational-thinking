@@ -12,7 +12,7 @@ from functools import lru_cache
 import pandas as pd
 from sqlalchemy import text
 
-from ..core.calendar import TradingCalendar, lot_size_on
+from ..core.calendar import TradingCalendar, lot_size_for_expiry, lot_size_on
 from ..core.instruments import OptionContract, Right
 from ..core.market import Quote
 from ..db.session import make_engine
@@ -82,6 +82,8 @@ class StoredMarketData(MarketData):
         if expiry is not None and expiry in self._lot:
             return self._lot[expiry]
         nxt = [e for e in self._expiries if e >= d]
+        if expiry is not None:
+            return lot_size_for_expiry(expiry)
         return self._lot.get(nxt[0]) if nxt else lot_size_on(d)
 
     @lru_cache(maxsize=8)
