@@ -1,0 +1,13 @@
+[project]
+name = "optlab"
+version = "0.1.0"
+description = "Systematic NIFTY options research and PAPER-trading platform (no live trading)"
+requires-python = ">=3.11"
+dependencies = ["numpy", "pandas", "scipy", "SQLAlchemy>=2", "pydantic>=2", "PyYAML", "streamlit", "plotly"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+postgres = ["psycopg[binary]"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

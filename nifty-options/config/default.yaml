@@ -1,0 +1,39 @@
+# Global defaults. Experiment specs (config/experiments/*.yaml) may override.
+project:
+  underlying: NIFTY
+  mode: paper_only            # there is no live mode. See docs/PAPER_TRADING.md
+
+database:
+  url: sqlite:///data/optlab.db   # e.g. postgresql+psycopg://user:pass@host/optlab
+
+capital:
+  initial_capital: 100000
+
+risk:
+  initial_capital: 100000
+  risk_per_trade_pct: 0.01        # research also tests 0.005, 0.015, 0.02
+  max_open_risk_pct: 0.05
+  max_daily_loss_pct: 0.03
+  max_weekly_loss_pct: 0.06
+  max_lots_per_trade: 10
+  max_concurrent_positions: 3
+
+costs:                            # VERIFY against latest NSE/SEBI/Finance Act notices
+  brokerage_per_order: 20.0
+  exchange_txn_pct: 0.0003503
+  sebi_pct: 0.000001
+  stamp_buy_pct: 0.00003
+  gst_pct: 0.18
+  exercise_brokerage: 0.0
+  stt_schedule:
+    - {effective_from: 2000-01-01, sell_premium_pct: 0.000625, exercise_intrinsic_pct: 0.00125}
+    - {effective_from: 2024-10-01, sell_premium_pct: 0.001,    exercise_intrinsic_pct: 0.00125}
+    - {effective_from: 2026-04-01, sell_premium_pct: 0.0015,   exercise_intrinsic_pct: 0.0015}
+
+fills:
+  realistic:   {name: realistic,   realistic_spread_fraction: 0.5, slippage_ticks: 1}
+  optimistic:  {name: optimistic,  slippage_ticks: 0}
+  pessimistic: {name: pessimistic, slippage_ticks: 1}
+
+engine:
+  fill_delay_bars: 1
