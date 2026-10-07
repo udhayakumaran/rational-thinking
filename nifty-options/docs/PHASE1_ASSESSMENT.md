@@ -69,10 +69,10 @@ appears. Until credentials exist, the paper engine runs in **replay mode** again
 | Item | Default | Notes |
 |---|---|---|
 | Brokerage | Rs 20 per executed order (per leg, per side) | A 2-leg spread round trip = 4 orders = Rs 80 + GST |
-| NSE transaction charge | 0.03503% of premium | VERIFY current circular |
+| NSE transaction charge | 0.03503% of premium from Oct-2024; ~0.0495% before (VERIFY older history) | Dated schedule |
 | SEBI fee | Rs 10/crore | |
 | Stamp duty | 0.003% of premium, buy side | |
-| STT | 0.0625% sell premium (to Sep-2024); 0.1% (Oct-2024); 0.15% from Apr-2026 (VERIFY Budget-2026); exercise 0.125%/0.15% of intrinsic | Dated schedule; applied by trade date |
+| STT | 0.017% (pre-Jun-2016), 0.05%, 0.0625% (Apr-2023), 0.1% (Oct-2024), 0.15% (Apr-2026) of sell premium; exercise 0.125% -> 0.15% of intrinsic | Dated schedule; applied by trade date |
 | GST | 18% on brokerage + exchange + SEBI | |
 | Fill - optimistic | mid | Never used for decisions |
 | Fill - realistic (default) | mid +/- half the half-spread + 1 tick, per leg | |
@@ -141,4 +141,6 @@ EXP-002..005 fix the expression chosen by EXP-001 evidence; that choice is recor
 6. **Intraday theta conventions.** The synthetic null test showed that pricing options on calendar time while variance
    accrues in trading time creates a fake long-gamma edge. Real option prices have their own intraday decay pattern;
    any "edge" in buying options intraday must be checked for this before it is believed.
-7. **Unverified constants**: lot-size dates, STT 2026 rates, NSE transaction charge - marked VERIFY in code.
+7. **Constants** (independently reviewed 2026-10): STT history incl. 0.15% from 2026-04-01 and the post-Oct-2024 NSE
+   charge are confirmed; lot sizes are keyed by contract expiry (NSE applies them per series). Still medium confidence:
+   pre-Oct-2024 NSE transaction-charge history and the 2015 lot-size switch date - real data's own lot sizes override.
