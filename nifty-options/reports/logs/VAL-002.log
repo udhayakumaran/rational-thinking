@@ -1,8 +1,0 @@
-[VAL-002] data=SYNTH-POSCTRL-c233a5ab0d synthetic=True days=783
-  variant A_long_atm
-    grid: 9 points done
-    -> FLAGGED score=77.6 OOS E[R]=0.14083487570175252
-  variant B_atm_to_otm100
-    grid: 9 points done
-    -> REJECT score=64.3 OOS E[R]=0.04836917342171677
-  variant C_itm50_to_otm100

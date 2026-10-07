@@ -6,3 +6,4 @@ data/raw/
 data/processed/
 reports/**/*.csv
 reports/paper/
+reports/logs/
